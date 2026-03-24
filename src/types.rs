@@ -299,6 +299,74 @@ pub struct TradeDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Advanced Filtering & Sorting
+// ---------------------------------------------------------------------------
+
+/// Field to sort trades by.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TradeSortField {
+    CreatedAt,
+    UpdatedAt,
+    Amount,
+    Fee,
+}
+
+/// A single sort criterion: field + direction.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SortCriterion {
+    pub field: TradeSortField,
+    pub order: SortOrder,
+}
+
+/// Multi-criteria filter for advanced trade search.
+/// All set fields are ANDed together.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TradeFilter {
+    /// Filter by trade status
+    pub status: Option<TradeStatus>,
+    /// Minimum trade amount (inclusive)
+    pub min_amount: Option<u64>,
+    /// Maximum trade amount (inclusive)
+    pub max_amount: Option<u64>,
+    /// Minimum created_at ledger (inclusive)
+    pub from_ledger: Option<u32>,
+    /// Maximum created_at ledger (inclusive)
+    pub to_ledger: Option<u32>,
+    /// Only return trades where this address is seller
+    pub seller: Option<Address>,
+    /// Only return trades where this address is buyer
+    pub buyer: Option<Address>,
+}
+
+/// Paginated result for advanced trade search.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TradeSearchPage {
+    pub records: Vec<TransactionRecord>,
+    pub total: u32,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+/// Maximum number of presets a user can save.
+pub const MAX_PRESETS_PER_USER: u32 = 20;
+/// Maximum length of a preset name.
+pub const PRESET_NAME_MAX_LEN: u32 = 64;
+
+/// A saved filter preset owned by a user.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilterPreset {
+    pub id: u64,
+    pub owner: Address,
+    pub name: String,
+    pub filter: TradeFilter,
+    pub sort: SortCriterion,
+    pub created_at: u32,
+    pub updated_at: u32,
 // Analytics Charts & Graphs
 // ---------------------------------------------------------------------------
 

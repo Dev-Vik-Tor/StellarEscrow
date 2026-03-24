@@ -4,6 +4,7 @@ mod admin;
 mod analytics;
 mod errors;
 mod events;
+mod filtering;
 mod history;
 mod onboarding;
 mod storage;
@@ -29,6 +30,11 @@ pub use theme::{
     THEME_DARK, THEME_LIGHT, THEME_SYSTEM,
 };
 pub use types::{
+    DisputeResolution, FilterPreset, HistoryFilter, HistoryPage, MetadataEntry,
+    PlatformAnalytics, SortCriterion, SortOrder, SystemConfig, TierConfig, Trade,
+    TradeDetail, TradeFilter, TradeMetadata, TradeSearchPage, TradeStatus, TradeTemplate,
+    TemplateTerms, TemplateVersion, TradeSortField, TransactionRecord, UserAnalytics,
+    UserProfile, UserPreference, UserTier, UserTierInfo, VerificationStatus,
     AnalyticsFilter, ChartPoint, DisputeResolution, FeeChartData, HistoryFilter, HistoryPage,
     MetadataEntry, PlatformAnalytics, SortOrder, StatusDistribution, SuccessRateData,
     SystemConfig, TierConfig, Trade, TradeDetail, TradeMetadata, TradeStatus, TradeTemplate,

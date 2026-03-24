@@ -106,6 +106,12 @@ pub fn emit_trade_from_template(env: &Env, trade_id: u64, template_id: u64, vers
     env.events().publish((symbol_short!("tmpl_tr"),), (trade_id, template_id, version));
 }
 
+pub fn emit_preset_saved(env: &Env, owner: Address, preset_id: u64) {
+    env.events().publish((symbol_short!("pst_save"),), (owner, preset_id));
+}
+
+pub fn emit_preset_deleted(env: &Env, owner: Address, preset_id: u64) {
+    env.events().publish((symbol_short!("pst_del"),), (owner, preset_id));
 pub fn emit_analytics_exported(env: &Env, export_type: u32) {
     env.events().publish((symbol_short!("anlt_exp"),), export_type);
 }

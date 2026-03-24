@@ -2,12 +2,14 @@ use soroban_sdk::{Address, Env, Vec};
 
 use crate::errors::ContractError;
 use crate::types::{
+    FilterPreset, PlatformAnalytics, TierConfig, TimelineEntry, Trade, TradeTemplate,
     PlatformAnalytics, TierConfig, TimelineEntry, Trade, TradeTemplate,
     OnboardingProgress, PlatformAnalytics, TierConfig, TimelineEntry, Trade, TradeTemplate,
     UserAnalytics, UserPreference, UserProfile, UserTierInfo,
 };
 
 // ---------------------------------------------------------------------------
+// Instance-storage keys
 // Instance-storage keys (contract-wide singletons)
 // ---------------------------------------------------------------------------
 const INITIALIZED: &str = "INIT";
@@ -20,6 +22,10 @@ const PAUSED: &str = "PAUSED";
 const TIER_CONFIG: &str = "TIER_CFG";
 const TEMPLATE_COUNTER: &str = "TMPL_CTR";
 const PLATFORM_STATS: &str = "PSTATS";
+const PRESET_COUNTER: &str = "PST_CTR";
+
+// ---------------------------------------------------------------------------
+// Persistent-storage key prefixes
 
 // ---------------------------------------------------------------------------
 // Persistent-storage key prefixes (per-entity)
@@ -33,6 +39,8 @@ const USER_PREFIX: &str = "USER";
 const USER_PREF_PREFIX: &str = "UPREF";
 const USER_ANALYTICS_PREFIX: &str = "USTAT";
 const TIMELINE_PREFIX: &str = "TLINE";
+const PRESET_PREFIX: &str = "PST";
+const USER_PRESETS_PREFIX: &str = "UPST";
 const ONBOARDING_PREFIX: &str = "ONBOARD";
 
 // =============================================================================
@@ -170,11 +178,7 @@ pub fn has_arbitrator(env: &Env, arbitrator: &Address) -> bool {
 /// Append a trade ID to the address's trade index (call for both seller and buyer).
 pub fn index_trade_for_address(env: &Env, address: &Address, trade_id: u64) {
     let key = (ADDR_TRADES_PREFIX, address);
-    let mut ids: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env));
+    let mut ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
     ids.push_back(trade_id);
     env.storage().persistent().set(&key, &ids);
 }
@@ -182,10 +186,7 @@ pub fn index_trade_for_address(env: &Env, address: &Address, trade_id: u64) {
 /// Return all trade IDs associated with an address.
 pub fn get_trade_ids_for_address(env: &Env, address: &Address) -> Vec<u64> {
     let key = (ADDR_TRADES_PREFIX, address);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env))
+    env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env))
 }
 
 // =============================================================================
@@ -223,9 +224,7 @@ pub fn get_template_counter(env: &Env) -> u64 {
 }
 
 pub fn increment_template_counter(env: &Env) -> Result<u64, ContractError> {
-    let next = get_template_counter(env)
-        .checked_add(1)
-        .ok_or(ContractError::Overflow)?;
+    let next = get_template_counter(env).checked_add(1).ok_or(ContractError::Overflow)?;
     env.storage().instance().set(&TEMPLATE_COUNTER, &next);
     Ok(next)
 }
@@ -237,6 +236,7 @@ pub fn save_template(env: &Env, template_id: u64, template: &TradeTemplate) {
 
 pub fn get_template(env: &Env, template_id: u64) -> Result<TradeTemplate, ContractError> {
     let key = (TEMPLATE_PREFIX, template_id);
+    env.storage().persistent().get(&key).ok_or(ContractError::TemplateNotFound)
     env.storage()
         .persistent()
         .get(&key)
@@ -291,19 +291,16 @@ pub fn save_analytics(env: &Env, analytics: &UserAnalytics) {
 
 pub fn get_analytics(env: &Env, address: &Address) -> UserAnalytics {
     let key = (USER_ANALYTICS_PREFIX, address);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(UserAnalytics {
-            address: address.clone(),
-            total_trades: 0,
-            trades_as_seller: 0,
-            trades_as_buyer: 0,
-            total_volume: 0,
-            completed_trades: 0,
-            disputed_trades: 0,
-            cancelled_trades: 0,
-        })
+    env.storage().persistent().get(&key).unwrap_or(UserAnalytics {
+        address: address.clone(),
+        total_trades: 0,
+        trades_as_seller: 0,
+        trades_as_buyer: 0,
+        total_volume: 0,
+        completed_trades: 0,
+        disputed_trades: 0,
+        cancelled_trades: 0,
+    })
 }
 
 // =============================================================================
@@ -311,18 +308,15 @@ pub fn get_analytics(env: &Env, address: &Address) -> UserAnalytics {
 // =============================================================================
 
 pub fn get_platform_analytics(env: &Env) -> PlatformAnalytics {
-    env.storage()
-        .instance()
-        .get(&PLATFORM_STATS)
-        .unwrap_or(PlatformAnalytics {
-            total_trades: 0,
-            total_volume: 0,
-            total_fees_collected: 0,
-            active_trades: 0,
-            completed_trades: 0,
-            disputed_trades: 0,
-            cancelled_trades: 0,
-        })
+    env.storage().instance().get(&PLATFORM_STATS).unwrap_or(PlatformAnalytics {
+        total_trades: 0,
+        total_volume: 0,
+        total_fees_collected: 0,
+        active_trades: 0,
+        completed_trades: 0,
+        disputed_trades: 0,
+        cancelled_trades: 0,
+    })
 }
 
 pub fn save_platform_analytics(env: &Env, stats: &PlatformAnalytics) {
@@ -335,21 +329,70 @@ pub fn save_platform_analytics(env: &Env, stats: &PlatformAnalytics) {
 
 pub fn append_timeline_entry(env: &Env, trade_id: u64, entry: TimelineEntry) {
     let key = (TIMELINE_PREFIX, trade_id);
-    let mut entries: Vec<TimelineEntry> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env));
+    let mut entries: Vec<TimelineEntry> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
     entries.push_back(entry);
     env.storage().persistent().set(&key, &entries);
 }
 
 pub fn get_timeline(env: &Env, trade_id: u64) -> Vec<TimelineEntry> {
     let key = (TIMELINE_PREFIX, trade_id);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env))
+    env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env))
+}
+
+// =============================================================================
+// Filter presets
+// =============================================================================
+
+fn get_preset_counter(env: &Env) -> u64 {
+    env.storage().instance().get(&PRESET_COUNTER).unwrap_or(0)
+}
+
+pub fn increment_preset_counter(env: &Env) -> Result<u64, ContractError> {
+    let next = get_preset_counter(env).checked_add(1).ok_or(ContractError::Overflow)?;
+    env.storage().instance().set(&PRESET_COUNTER, &next);
+    Ok(next)
+}
+
+pub fn save_preset(env: &Env, preset: &FilterPreset) {
+    let key = (PRESET_PREFIX, preset.id);
+    env.storage().persistent().set(&key, preset);
+}
+
+pub fn get_preset(env: &Env, preset_id: u64) -> Result<FilterPreset, ContractError> {
+    let key = (PRESET_PREFIX, preset_id);
+    env.storage().persistent().get(&key).ok_or(ContractError::PresetNotFound)
+}
+
+pub fn delete_preset(env: &Env, preset_id: u64) {
+    let key = (PRESET_PREFIX, preset_id);
+    env.storage().persistent().remove(&key);
+}
+
+/// Append a preset ID to the user's preset index.
+pub fn index_preset_for_user(env: &Env, owner: &Address, preset_id: u64) {
+    let key = (USER_PRESETS_PREFIX, owner);
+    let mut ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    ids.push_back(preset_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Remove a preset ID from the user's preset index.
+pub fn remove_preset_from_index(env: &Env, owner: &Address, preset_id: u64) {
+    let key = (USER_PRESETS_PREFIX, owner);
+    let ids: Vec<u64> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    let mut updated: Vec<u64> = Vec::new(env);
+    for id in ids.iter() {
+        if id != preset_id {
+            updated.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &updated);
+}
+
+/// Return all preset IDs for a user.
+pub fn get_preset_ids_for_user(env: &Env, owner: &Address) -> Vec<u64> {
+    let key = (USER_PRESETS_PREFIX, owner);
+    env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env))
 }
 
 // =============================================================================
