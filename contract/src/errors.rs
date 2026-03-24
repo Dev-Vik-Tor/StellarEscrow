@@ -14,8 +14,6 @@ pub enum ContractError {
     Overflow = 8,
     NoFeesToWithdraw = 9,
     Unauthorized = 10,
-    BatchLimitExceeded = 11,
-    EmptyBatch = 12,
-    MetadataTooManyEntries = 13,
-    MetadataValueTooLong = 14,
+    MetadataTooManyEntries = 11,
+    MetadataValueTooLong = 12,
 }

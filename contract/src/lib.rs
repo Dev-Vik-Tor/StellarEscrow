@@ -2,30 +2,24 @@
 
 mod errors;
 mod events;
-mod history;
 mod storage;
 mod types;
-mod users;
 
 #[cfg(test)]
 mod test;
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
-use soroban_sdk::token::TokenClient;
 
 use types::{METADATA_MAX_ENTRIES, METADATA_MAX_VALUE_LEN};
 
 pub use errors::ContractError;
-pub use types::{
-    DisputeResolution, HistoryFilter, HistoryPage, SortOrder, Trade, TradeStatus,
-    TransactionRecord, UserAnalytics, UserPreference, UserProfile, VerificationStatus,
-};
+pub use types::{DisputeResolution, MetadataEntry, Trade, TradeMetadata, TradeStatus};
 
 use storage::{
     get_accumulated_fees, get_admin, get_fee_bps, get_trade, get_usdc_token,
-    has_arbitrator, increment_trade_counter, index_trade_for_address,
-    is_initialized, remove_arbitrator, save_arbitrator, save_trade, set_accumulated_fees,
-    set_admin, set_fee_bps, set_initialized, set_trade_counter, set_usdc_token,
+    has_arbitrator, has_initialized, increment_trade_counter, is_initialized, remove_arbitrator,
+    save_arbitrator, save_trade, set_accumulated_fees, set_admin, set_fee_bps, set_initialized,
+    set_trade_counter, set_usdc_token,
 };
 
 /// Validate metadata entries against size limits.
@@ -115,7 +109,7 @@ impl StellarEscrowContract {
             return Err(ContractError::NoFeesToWithdraw);
         }
         let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
+        let token_client = token::Client::new(&env, &token);
         token_client.transfer(&env.current_contract_address(), &to, &(fees as i128));
         set_accumulated_fees(&env, 0);
         events::emit_fees_withdrawn(&env, fees, to);
@@ -154,7 +148,6 @@ impl StellarEscrowContract {
             .checked_div(10000)
             .ok_or(ContractError::Overflow)?;
 
-        let now = env.ledger().sequence();
         let trade = Trade {
             id: trade_id,
             seller: seller.clone(),
@@ -163,16 +156,9 @@ impl StellarEscrowContract {
             fee,
             arbitrator,
             status: TradeStatus::Created,
-            created_at: now,
-            updated_at: now,
             metadata,
         };
-
         save_trade(&env, trade_id, &trade);
-        index_trade_for_address(&env, &seller, trade_id);
-        index_trade_for_address(&env, &buyer, trade_id);
-        // Update analytics
-        users::record_trade_created(&env, &seller, &buyer, amount);
         events::emit_trade_created(&env, trade_id, seller, buyer, amount);
         Ok(trade_id)
     }
@@ -188,14 +174,13 @@ impl StellarEscrowContract {
         }
         trade.buyer.require_auth();
         let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
+        let token_client = token::Client::new(&env, &token);
         token_client.transfer(
             &trade.buyer,
             &env.current_contract_address(),
             &(trade.amount as i128),
         );
         trade.status = TradeStatus::Funded;
-        trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
         events::emit_trade_funded(&env, trade_id);
         Ok(())
@@ -212,7 +197,6 @@ impl StellarEscrowContract {
         }
         trade.seller.require_auth();
         trade.status = TradeStatus::Completed;
-        trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
         events::emit_trade_completed(&env, trade_id);
         Ok(())
@@ -229,7 +213,7 @@ impl StellarEscrowContract {
         }
         trade.buyer.require_auth();
         let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
+        let token_client = token::Client::new(&env, &token);
         let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
         token_client.transfer(
             &env.current_contract_address(),
@@ -239,13 +223,12 @@ impl StellarEscrowContract {
         let current_fees = get_accumulated_fees(&env)?;
         let new_fees = current_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?;
         set_accumulated_fees(&env, new_fees);
-        users::record_trade_completed(&env, &trade.seller, &trade.buyer);
         events::emit_trade_confirmed(&env, trade_id, payout, trade.fee);
         Ok(())
     }
 
     /// Raise a dispute
-    pub fn raise_dispute(env: Env, trade_id: u64, caller: Address) -> Result<(), ContractError> {
+    pub fn raise_dispute(env: Env, trade_id: u64) -> Result<(), ContractError> {
         if !is_initialized(&env) {
             return Err(ContractError::NotInitialized);
         }
@@ -256,14 +239,13 @@ impl StellarEscrowContract {
         if trade.arbitrator.is_none() {
             return Err(ContractError::ArbitratorNotRegistered);
         }
+        let caller = env.invoker();
         if caller != trade.buyer && caller != trade.seller {
             return Err(ContractError::Unauthorized);
         }
         caller.require_auth();
         trade.status = TradeStatus::Disputed;
-        trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
-        users::record_trade_disputed(&env, &trade.seller, &trade.buyer);
         events::emit_dispute_raised(&env, trade_id, caller);
         Ok(())
     }
@@ -284,7 +266,7 @@ impl StellarEscrowContract {
         let arbitrator = trade.arbitrator.ok_or(ContractError::ArbitratorNotRegistered)?;
         arbitrator.require_auth();
         let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
+        let token_client = token::Client::new(&env, &token);
         let recipient = match resolution {
             DisputeResolution::ReleaseToBuyer => trade.buyer.clone(),
             DisputeResolution::ReleaseToSeller => trade.seller.clone(),
@@ -313,16 +295,10 @@ impl StellarEscrowContract {
         }
         trade.seller.require_auth();
         trade.status = TradeStatus::Cancelled;
-        trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
-        users::record_trade_cancelled(&env, &trade.seller);
         events::emit_trade_cancelled(&env, trade_id);
         Ok(())
     }
-
-    // -------------------------------------------------------------------------
-    // Query functions
-    // -------------------------------------------------------------------------
 
     /// Get trade details
     pub fn get_trade(env: Env, trade_id: u64) -> Result<Trade, ContractError> {
@@ -359,7 +335,6 @@ impl StellarEscrowContract {
             validate_metadata(meta)?;
         }
         trade.metadata = metadata;
-        trade.updated_at = env.ledger().sequence();
         save_trade(&env, trade_id, &trade);
         events::emit_metadata_updated(&env, trade_id);
         Ok(())
@@ -373,251 +348,8 @@ impl StellarEscrowContract {
         let trade = get_trade(&env, trade_id)?;
         Ok(trade.metadata)
     }
+}
 
-    // -------------------------------------------------------------------------
-    // Batch operations
-    // -------------------------------------------------------------------------
-
-    /// Batch create trades
-    pub fn batch_create_trades(
-        env: Env,
-        seller: Address,
-        trades: soroban_sdk::Vec<(Address, u64, Option<Address>)>,
-    ) -> Result<soroban_sdk::Vec<u64>, ContractError> {
-        if !is_initialized(&env) {
-            return Err(ContractError::NotInitialized);
-        }
-        if trades.is_empty() {
-            return Err(ContractError::EmptyBatch);
-        }
-        if trades.len() > 100 {
-            return Err(ContractError::BatchLimitExceeded);
-        }
-        seller.require_auth();
-        let fee_bps = get_fee_bps(&env)?;
-        let mut trade_ids = soroban_sdk::Vec::new(&env);
-        let mut total_amount: u64 = 0;
-        let now = env.ledger().sequence();
-
-        for (buyer, amount, arbitrator) in trades.iter() {
-            if amount == 0 {
-                return Err(ContractError::InvalidAmount);
-            }
-            if let Some(ref arb) = arbitrator {
-                if !has_arbitrator(&env, arb) {
-                    return Err(ContractError::ArbitratorNotRegistered);
-                }
-            }
-            let trade_id = increment_trade_counter(&env)?;
-            let fee = amount
-                .checked_mul(fee_bps as u64)
-                .ok_or(ContractError::Overflow)?
-                .checked_div(10000)
-                .ok_or(ContractError::Overflow)?;
-
-            let trade = Trade {
-                id: trade_id,
-                seller: seller.clone(),
-                buyer: buyer.clone(),
-                amount,
-                fee,
-                arbitrator,
-                status: TradeStatus::Created,
-                created_at: now,
-                updated_at: now,
-                metadata: None,
-            };
-            save_trade(&env, trade_id, &trade);
-            index_trade_for_address(&env, &seller, trade_id);
-            index_trade_for_address(&env, &buyer, trade_id);
-            trade_ids.push_back(trade_id);
-            total_amount = total_amount.checked_add(amount).ok_or(ContractError::Overflow)?;
-        }
-        events::emit_batch_trades_created(&env, trade_ids.len() as u32, total_amount);
-        Ok(trade_ids)
-    }
-
-    /// Batch fund trades
-    pub fn batch_fund_trades(
-        env: Env,
-        buyer: Address,
-        trade_ids: soroban_sdk::Vec<u64>,
-    ) -> Result<(), ContractError> {
-        if !is_initialized(&env) {
-            return Err(ContractError::NotInitialized);
-        }
-        if trade_ids.is_empty() {
-            return Err(ContractError::EmptyBatch);
-        }
-        if trade_ids.len() > 100 {
-            return Err(ContractError::BatchLimitExceeded);
-        }
-        buyer.require_auth();
-        let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
-        let mut total_amount: u64 = 0;
-
-        for trade_id in trade_ids.iter() {
-            let trade = get_trade(&env, trade_id)?;
-            if trade.status != TradeStatus::Created {
-                return Err(ContractError::InvalidStatus);
-            }
-            if trade.buyer != buyer {
-                return Err(ContractError::Unauthorized);
-            }
-            total_amount = total_amount.checked_add(trade.amount).ok_or(ContractError::Overflow)?;
-        }
-        token_client.transfer(&buyer, &env.current_contract_address(), &(total_amount as i128));
-
-        let now = env.ledger().sequence();
-        for trade_id in trade_ids.iter() {
-            let mut trade = get_trade(&env, trade_id)?;
-            trade.status = TradeStatus::Funded;
-            trade.updated_at = now;
-            save_trade(&env, trade_id, &trade);
-        }
-        events::emit_batch_trades_funded(&env, trade_ids.len() as u32, total_amount);
-        Ok(())
-    }
-
-    /// Batch confirm trades
-    pub fn batch_confirm_trades(
-        env: Env,
-        buyer: Address,
-        trade_ids: soroban_sdk::Vec<u64>,
-    ) -> Result<(), ContractError> {
-        if !is_initialized(&env) {
-            return Err(ContractError::NotInitialized);
-        }
-        if trade_ids.is_empty() {
-            return Err(ContractError::EmptyBatch);
-        }
-        if trade_ids.len() > 100 {
-            return Err(ContractError::BatchLimitExceeded);
-        }
-        buyer.require_auth();
-        let token = get_usdc_token(&env)?;
-        let token_client = TokenClient::new(&env, &token);
-        let mut total_payout: u64 = 0;
-        let mut total_fees: u64 = 0;
-        let mut seller_payouts: soroban_sdk::Map<Address, u64> = soroban_sdk::Map::new(&env);
-
-        for trade_id in trade_ids.iter() {
-            let trade = get_trade(&env, trade_id)?;
-            if trade.status != TradeStatus::Completed {
-                return Err(ContractError::InvalidStatus);
-            }
-            if trade.buyer != buyer {
-                return Err(ContractError::Unauthorized);
-            }
-            let payout = trade.amount.checked_sub(trade.fee).ok_or(ContractError::Overflow)?;
-            total_payout = total_payout.checked_add(payout).ok_or(ContractError::Overflow)?;
-            total_fees = total_fees.checked_add(trade.fee).ok_or(ContractError::Overflow)?;
-            let current = seller_payouts.get(trade.seller.clone()).unwrap_or(0);
-            let new_val = current.checked_add(payout).ok_or(ContractError::Overflow)?;
-            seller_payouts.set(trade.seller.clone(), new_val);
-        }
-        for (seller, payout) in seller_payouts.iter() {
-            token_client.transfer(&env.current_contract_address(), &seller, &(payout as i128));
-        }
-        let current_fees = get_accumulated_fees(&env)?;
-        let new_fees = current_fees.checked_add(total_fees).ok_or(ContractError::Overflow)?;
-        set_accumulated_fees(&env, new_fees);
-        events::emit_batch_trades_confirmed(&env, trade_ids.len() as u32, total_payout, total_fees);
-        Ok(())
-    }
-
-    // -------------------------------------------------------------------------
-    // Transaction history
-    // -------------------------------------------------------------------------
-
-    /// Return paginated, filtered, sorted transaction history for an address.
-    pub fn get_transaction_history(
-        env: Env,
-        address: Address,
-        filter: HistoryFilter,
-        sort: SortOrder,
-        offset: u32,
-        limit: u32,
-    ) -> Result<HistoryPage, ContractError> {
-        history::get_history(&env, address, filter, sort, offset, limit)
-    }
-
-    /// Export transaction history as CSV.
-    /// Columns: trade_id,amount,fee,status,created_at,updated_at
-    pub fn export_transaction_csv(
-        env: Env,
-        address: Address,
-        filter: HistoryFilter,
-    ) -> Result<soroban_sdk::String, ContractError> {
-        history::export_csv(&env, address, filter)
-    }
-
-    // -------------------------------------------------------------------------
-    // User Management (Issue #64)
-    // -------------------------------------------------------------------------
-
-    /// Register a new user. username_hash and contact_hash are SHA-256 hashes
-    /// computed off-chain to avoid storing PII on-chain.
-    pub fn register_user(
-        env: Env,
-        address: Address,
-        username_hash: soroban_sdk::Bytes,
-        contact_hash: soroban_sdk::Bytes,
-    ) -> Result<(), ContractError> {
-        users::register_user(&env, address, username_hash, contact_hash)
-    }
-
-    /// Update an existing user's profile hashes.
-    pub fn update_profile(
-        env: Env,
-        address: Address,
-        username_hash: soroban_sdk::Bytes,
-        contact_hash: soroban_sdk::Bytes,
-    ) -> Result<(), ContractError> {
-        users::update_profile(&env, address, username_hash, contact_hash)
-    }
-
-    /// Get a user's profile.
-    pub fn get_user_profile(env: Env, address: Address) -> Result<UserProfile, ContractError> {
-        users::get_profile(&env, &address)
-    }
-
-    /// Set or update a user preference.
-    pub fn set_user_preference(
-        env: Env,
-        address: Address,
-        key: soroban_sdk::String,
-        value: soroban_sdk::String,
-    ) -> Result<(), ContractError> {
-        users::set_preference(&env, address, key, value)
-    }
-
-    /// Get a user preference by key.
-    pub fn get_user_preference(
-        env: Env,
-        address: Address,
-        key: soroban_sdk::String,
-    ) -> Result<UserPreference, ContractError> {
-        users::get_pref(&env, &address, &key)
-    }
-
-    /// Set verification status for a user (admin only).
-    pub fn set_user_verification(
-        env: Env,
-        address: Address,
-        status: VerificationStatus,
-    ) -> Result<(), ContractError> {
-        if !is_initialized(&env) {
-            return Err(ContractError::NotInitialized);
-        }
-        let admin = get_admin(&env)?;
-        admin.require_auth();
-        users::set_verification(&env, &address, status)
-    }
-
-    /// Get analytics for a user.
-    pub fn get_user_analytics(env: Env, address: Address) -> UserAnalytics {
-        users::get_user_analytics(&env, &address)
-    }
+mod token {
+    soroban_sdk::contractimport!(file = "./token.wasm");
 }

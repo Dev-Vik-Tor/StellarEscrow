@@ -48,11 +48,6 @@ pub fn emit_arbitrator_registered(env: &Env, arbitrator: Address) {
         .publish((symbol_short!("arb_reg"),), arbitrator);
 }
 
-pub fn emit_metadata_updated(env: &Env, trade_id: u64) {
-    env.events()
-        .publish((symbol_short!("meta_upd"),), trade_id);
-}
-
 pub fn emit_arbitrator_removed(env: &Env, arbitrator: Address) {
     env.events()
         .publish((symbol_short!("arb_rem"),), arbitrator);
@@ -67,17 +62,7 @@ pub fn emit_fees_withdrawn(env: &Env, amount: u64, to: Address) {
         .publish((symbol_short!("fees_out"),), (amount, to));
 }
 
-pub fn emit_batch_trades_created(env: &Env, count: u32, total_amount: u64) {
+pub fn emit_metadata_updated(env: &Env, trade_id: u64) {
     env.events()
-        .publish((symbol_short!("batch_cr"),), (count, total_amount));
-}
-
-pub fn emit_batch_trades_funded(env: &Env, count: u32, total_amount: u64) {
-    env.events()
-        .publish((symbol_short!("batch_fd"),), (count, total_amount));
-}
-
-pub fn emit_batch_trades_confirmed(env: &Env, count: u32, total_payout: u64, total_fees: u64) {
-    env.events()
-        .publish((symbol_short!("batch_cn"),), (count, total_payout, total_fees));
+        .publish((symbol_short!("meta_upd"),), trade_id);
 }
